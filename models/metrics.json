@@ -1,0 +1,40 @@
+{
+  "model_version": "1.0.0",
+  "algorithm": "LogisticRegression(class_weight='balanced') + StandardScaler + OneHotEncoder",
+  "trained_at": "2026-11-06T10:29:02+00:00",
+  "features": [
+    "revenu_mensuel",
+    "nombre_experiences_precedentes",
+    "age",
+    "note_evaluation_actuelle",
+    "note_evaluation_precedente",
+    "satisfaction_employee_equilibre_pro_perso",
+    "distance_domicile_travail",
+    "genre",
+    "departement"
+  ],
+  "target": "a_quitte_l_entreprise",
+  "random_state": 42,
+  "test_size": 0.2,
+  "n_train": 1176,
+  "n_test": 294,
+  "attrition_rate": 0.1612,
+  "data_fingerprint": "84e3e86f7270c407",
+  "cv_roc_auc_mean": 0.7192,
+  "cv_roc_auc_std": 0.0443,
+  "test_metrics": {
+    "roc_auc": 0.6458,
+    "accuracy": 0.6259,
+    "precision_attrition": 0.2308,
+    "recall_attrition": 0.5745,
+    "f1_attrition": 0.3293,
+    "confusion_matrix": {
+      "tn": 157,
+      "fp": 90,
+      "fn": 20,
+      "tp": 27
+    }
+  },
+  "sklearn_version": "1.9.1",
+  "python_version": "3.11.18"
+}
