@@ -1,0 +1,31 @@
+site_name: Attrition API - Documentation
+site_description: API de prédiction d'attrition (Futurisys / TechNova Partners)
+repo_url: https://github.com/pierrebrblt/attrition-api
+docs_dir: docs
+theme:
+  name: material
+  language: fr
+  features:
+    - navigation.sections
+    - content.code.copy
+nav:
+  - Accueil: index.md
+  - Architecture: architecture.md
+  - API: api.md
+  - Base de données: database.md
+  - Modèle ML: model.md
+  - Tests: tests.md
+  - CI/CD: ci_cd.md
+  - Déploiement: deployment.md
+  - Sécurité: security.md
+  - Standards & Git: standards.md
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format

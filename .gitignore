@@ -42,8 +42,16 @@ htmlcov/
 # Logs
 *.log
 
-# Modèles ML (fichiers lourds → préférer Git LFS ou Hugging Face)
+# Pytest / Coverage (rapports générés en CI ; le résumé versionné est dans reports/)
+coverage.xml
+reports/htmlcov/
+reports/junit.xml
+site/
+
+# Modèles ML : seul l'artefact de production (quelques Ko) et ses métriques sont versionnés.
+# Les gros modèles / expérimentations iraient sur Git LFS ou un registre de modèles.
 *.pkl
-*.joblib
 *.h5
-models/
+models/*
+!models/attrition_model.joblib
+!models/metrics.json
