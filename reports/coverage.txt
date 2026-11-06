@@ -1,0 +1,23 @@
+Name                           Stmts   Miss Branch BrPart  Cover   Missing
+--------------------------------------------------------------------------
+app/__init__.py                    1      0      0      0   100%
+app/config.py                     36      0      8      0   100%
+app/database.py                   21      0      4      0   100%
+app/db_models.py                  87      0      0      0   100%
+app/main.py                      113      2     14      2    97%   63->65, 67->75, 195-196
+app/ml/__init__.py                 0      0      0      0   100%
+app/ml/data_prep.py               62      0     12      0   100%
+app/ml/model.py                   56      0     12      0   100%
+app/schemas.py                    71      0      0      0   100%
+app/security.py                   22      0      8      0   100%
+app/services.py                   67      0     12      0   100%
+db/__init__.py                     0      0      0      0   100%
+db/create_db.py                   58      0     12      0   100%
+db/load_dataset.py                44      0      8      0   100%
+scripts/__init__.py                0      0      0      0   100%
+scripts/export_examples.py        32      0      2      0   100%
+scripts/predict_employees.py      34      0      2      0   100%
+scripts/query_db.py               46      0      8      0   100%
+scripts/train_model.py            55      0      2      0   100%
+--------------------------------------------------------------------------
+TOTAL                            805      2    104      2    99%
