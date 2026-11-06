@@ -4,7 +4,7 @@ import hashlib
 import logging
 import secrets
 
-from fastapi import Depends, HTTPException, Security, status
+from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader
 
 from app.config import Settings, get_settings
@@ -23,9 +23,14 @@ def fingerprint(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:12]
 
 
+def app_settings(request: Request) -> Settings:
+    """Configuration de l'instance d'application courante (et non la configuration globale)."""
+    return getattr(request.app.state, "settings", None) or get_settings()
+
+
 def require_api_key(
     api_key: str | None = Security(api_key_header),
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(app_settings),
 ) -> str:
     """Valide la clé et renvoie l'identifiant client (empreinte) associé.
 
