@@ -1,39 +1,208 @@
-name: CI - Tests API Attrition
+# Pipeline CI/CD - Attrition API
+#
+#   lint ──> test (PostgreSQL, env "test") ──> build + smoke test ──> push GHCR ──> deploy dev / prod
+#      └──> docs
+#
+# Environnements GitHub :
+#   test : secret optionnel TEST_DB_PASSWORD
+#   dev  : secrets API_KEYS, POSTGRES_PASSWORD   -> déployé à chaque push sur develop
+#   prod : secrets API_KEYS, POSTGRES_PASSWORD   -> déployé à chaque tag vX.Y.Z (approbation requise)
+# Le déploiement s'exécute sur un runner auto-hébergé (machine locale) quand la variable de
+# dépôt SELF_HOSTED_DEPLOY vaut "true" ; sinon seules les étapes CI + publication d'image tournent.
+name: CI/CD
 
 "on":
   push:
-    branches: [develop, main]
+    branches: [main, develop, "feature/**", "fix/**", "docs/**"]
+    tags: ["v*.*.*"]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
-  test:
+  lint:
+    name: Lint (ruff)
     runs-on: ubuntu-latest
-
+    timeout-minutes: 5
     steps:
-      - name: Checkout du code
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install ruff==0.17.4
+      - run: ruff check --output-format=github .
+      - run: ruff format --check .
 
-      - name: Installation des dépendances
+  test:
+    name: Tests + couverture (PostgreSQL)
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: test
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ${{ secrets.TEST_DB_PASSWORD || 'ci-password' }}
+          POSTGRES_DB: attrition_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d attrition_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      APP_ENV: test
+      TEST_DATABASE_URL: postgresql+psycopg2://ci:${{ secrets.TEST_DB_PASSWORD || 'ci-password' }}@localhost:5432/attrition_test
+      DATABASE_URL: postgresql+psycopg2://ci:${{ secrets.TEST_DB_PASSWORD || 'ci-password' }}@localhost:5432/attrition_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Création de la base
+        run: python -m db.create_db
+      - name: Tests unitaires et fonctionnels
+        run: >-
+          pytest
+          --cov --cov-report=term --cov-report=xml:reports/coverage.xml
+          --cov-report=html:reports/htmlcov --junitxml=reports/junit.xml
+      - name: Résumé de couverture
+        if: always()
         run: |
-          pip install fastapi uvicorn joblib scikit-learn pandas pydantic pytest httpx2
+          echo '### Couverture de tests' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          coverage report >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: reports/
+          retention-days: 30
 
-      - name: Téléchargement du modèle depuis Hugging Face
+  docs:
+    name: Documentation (MkDocs)
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install mkdocs-material==9.8.0
+      - run: mkdocs build --strict
+
+  build:
+    name: Image Docker (build, smoke test, publication)
+    needs: [test, docs]
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+      - name: Build (local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: attrition-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test du conteneur (mode prod)
         run: |
-          pip install huggingface_hub
-          python -c "
-          from huggingface_hub import hf_hub_download
-          hf_hub_download(
-              repo_id='PierreBrblt/attrition-model',
-              filename='attrition_model.pkl',
-              local_dir='models'
-          )
-          "
+          KEY=$(openssl rand -hex 24); echo "::add-mask::$KEY"
+          PW=$(openssl rand -hex 16); echo "::add-mask::$PW"
+          docker network create smoke
+          docker run -d --name db --network smoke -e POSTGRES_USER=app -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=attrition postgres:16-alpine
+          until docker exec db pg_isready -U app -d attrition; do sleep 1; done
+          URL="postgresql+psycopg2://app:$PW@db:5432/attrition"
+          docker run --rm --network smoke -e APP_ENV=prod -e API_KEYS="$KEY" -e DATABASE_URL="$URL" attrition-api:ci python -m db.create_db
+          docker run --rm --network smoke -e APP_ENV=prod -e API_KEYS="$KEY" -e DATABASE_URL="$URL" attrition-api:ci python -m db.load_dataset
+          docker run -d --name api --network smoke -p 8000:8000 -e APP_ENV=prod -e API_KEYS="$KEY" -e DATABASE_URL="$URL" attrition-api:ci
+          for i in $(seq 1 30); do curl -fs localhost:8000/health && break; sleep 1; done
+          curl -fs localhost:8000/health | grep '"status":"ok"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/predict/employee/1)" = 401
+          curl -fs -X POST localhost:8000/predict/employee/1 -H "X-API-Key: $KEY" | grep probabilite_attrition
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publication sur GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
 
-      - name: Lancement des tests
-        run: pytest tests/ -v
+  deploy-dev:
+    name: Déploiement dev
+    needs: build
+    if: github.ref == 'refs/heads/develop' && vars.SELF_HOSTED_DEPLOY == 'true'
+    runs-on: self-hosted
+    timeout-minutes: 10
+    environment:
+      name: dev
+      url: http://localhost:8000/docs
+    steps:
+      - uses: actions/checkout@v4
+      - name: Déploiement docker compose
+        env:
+          API_IMAGE: ${{ env.IMAGE_NAME }}:develop
+          APP_ENV: dev
+          API_KEYS: ${{ secrets.API_KEYS }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: ./scripts/deploy.sh
+
+  deploy-prod:
+    name: Déploiement prod
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') && vars.SELF_HOSTED_DEPLOY == 'true'
+    runs-on: self-hosted
+    timeout-minutes: 10
+    environment:
+      name: prod
+      url: http://localhost:8000/docs
+    steps:
+      - uses: actions/checkout@v4
+      - name: Déploiement docker compose
+        env:
+          API_IMAGE: ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.version }}
+          APP_ENV: prod
+          API_KEYS: ${{ secrets.API_KEYS }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: ./scripts/deploy.sh
